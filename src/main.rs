@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 //Uses -----------------------------------------------------------------------------------------------------------------
 use hyper::{
     body::to_bytes,
@@ -8,6 +9,7 @@ use route_recognizer::Params;
 use router::Router;
 use std::sync::Arc;
 use hyper::server::conn::AddrStream;
+use csv;
 use std::env;
 
 
@@ -24,6 +26,7 @@ pub struct AppState {
     pub state_thing: String,
     pub remote_ip: String,
     pub version: String,
+    pub guids: Arc<HashMap<String, String>>,
 }
 
 #[derive(Debug)]
@@ -67,6 +70,14 @@ async fn main() {
     println!("Version: {}", version);
     println!("--------------------");
 
+    //Load the guid lookup table
+    let mut guid_table: HashMap<String, String> = HashMap::new();
+    if load_guid_table(&mut guid_table).is_err() {
+        eprintln!("Could not load the guid list from file.");
+        std::process::exit(1);
+    }
+    let guids: Arc<HashMap<String, String>> = Arc::new(guid_table);
+
     let some_state = "state".to_string();
 
     let mut router: Router = Router::new();
@@ -78,6 +89,7 @@ async fn main() {
             state_thing: some_state.clone(),
             remote_ip: conn.remote_addr().to_string().clone(),
             version: version.to_string(),
+            guids: Arc::clone(&guids)
         };
 
         let router_capture = shared_router.clone();
@@ -100,7 +112,7 @@ async fn main() {
 async fn route(
     router: Arc<Router>,
     req: Request<hyper::Body>,
-    app_state: AppState,
+    app_state: AppState
 ) -> Result<Response, Error> {
     let found_handler = router.route(req.uri().path(), req.method());
     let resp = found_handler
@@ -108,6 +120,27 @@ async fn route(
         .invoke(Context::new(app_state, req, found_handler.params))
         .await;
     Ok(resp)
+}
+
+
+//Take a csv list of guid/url combos and load them into a passed in by ref hashmap
+//Return true/false on success or failure
+fn load_guid_table(guid_table: &mut HashMap<String, String>) -> Result<bool, Error> {
+    let mut rdr = csv::Reader::from_path("guids.csv")?;
+    for result in rdr.records() {
+        let record = result?;
+
+        let guid = record.get(1).unwrap().to_string().replace("-", "");
+        let url = record.get(2).unwrap().to_string();
+
+        println!("{:?} - {:?}", guid, url);
+        guid_table.insert(
+            guid,
+            url
+        );
+    }
+
+    Ok(true)
 }
 
 #[allow(dead_code)]

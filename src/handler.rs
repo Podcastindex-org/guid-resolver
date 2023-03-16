@@ -1,13 +1,8 @@
 use crate::{Context, Response};
 use hyper::StatusCode;
-use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
-use std::fs;
 use std::time::{SystemTime};
-use handlebars::Handlebars;
-use serde_json::json;
-
 
 
 //Structs ----------------------------------------------------------------------------------------------------
@@ -23,49 +18,81 @@ impl fmt::Display for HydraError {
 impl Error for HydraError {}
 
 
-
 //Functions --------------------------------------------------------------------------------------------------
 pub async fn resolve(ctx: Context) -> Response {
+
     //Get a current timestamp
     let timestamp: u64 = match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
         Ok(n) => n.as_secs(),
         Err(_) => panic!("SystemTime before UNIX EPOCH!"),
     };
 
-    println!("{:?} {:#?}", timestamp, ctx);
-
-    //Get query parameters
-    let params: HashMap<String, String> = ctx.req.uri().query().map(|v| {
-        url::form_urlencoded::parse(v.as_bytes()).into_owned().collect()
-    }).unwrap_or_else(HashMap::new);
-
-    println!("{:#?}", params);
+    //println!("{:?} {:#?}", timestamp, ctx);
 
     //Get the real IP of the connecting client
+    let client_ip;
     match ctx.req.headers().get("cf-connecting-ip") {
         Some(remote_ip) => {
-            println!("\nREQUEST[CloudFlare]: {}", remote_ip.to_str().unwrap());
+            client_ip = remote_ip.to_str().unwrap();
         }
         None => {
-            println!("\nREQUEST: {}", ctx.state.remote_ip);
+            client_ip = ctx.state.remote_ip.as_str();
         }
     }
 
-    //Give a landing page if a subdomain wasn't used
-    if params.len() == 0 {
-        let reg = Handlebars::new();
-        let doc = fs::read_to_string("home.html").expect("Something went wrong reading the file.");
-        let doc_rendered = reg.render_template(&doc, &json!({"version": ctx.state.version})).expect("Something went wrong rendering the file");
-        return hyper::Response::builder()
-            .status(StatusCode::OK)
-            .body(format!("{}", doc_rendered).into())
-            .unwrap();
+    //Get the host header so we can calculate a subdomain
+    let subdomain: String;
+    match ctx.req.headers().get("host") {
+        Some(host) => {
+            println!("\nREQUEST[host]: {}", host.to_str().unwrap());
+            subdomain = host.to_str().unwrap().to_string();
+        }
+        None => {
+            return hyper::Response::builder()
+                .status(StatusCode::from_u16(400).unwrap())
+                .body(format!("Host header is required.").into())
+                .unwrap();
+        }
     }
 
-    //Return success all the time so we don't burden the outside world with
-    //our own internal struggles :-)
-    return hyper::Response::builder()
-        .status(StatusCode::OK)
-        .body(format!("Success!").into())
-        .unwrap();
+    //The first member of the host header should be the guid we are to look for.  Take it
+    //and strip out any dashes so that we match on both dashed and non-dashed submissions
+    match subdomain.find(".guid.podcastindex.org") {
+        Some(ending_at) => {
+
+            //Strip dashes out of the guid requested if there are any
+            let guid = subdomain[0..ending_at]
+                .to_string()
+                .replace("-", "")
+                .replace("\"", "");
+
+            //Lookup the url
+            let url = ctx.state.guids.get(&guid);
+
+            //Give back the url for http response if found
+            if url.is_some() {
+                //Give some logging
+                println!("{:?}({:?}): {:?} -> {:#?}", client_ip, timestamp, guid, url.unwrap());
+
+                //Return 200 with plain text url
+                return hyper::Response::builder()
+                    .status(StatusCode::OK)
+                    .body(format!("{}", url.unwrap()).into())
+                    .unwrap();
+            }
+
+            //The guid was not found in the hash table
+            return hyper::Response::builder()
+                .status(StatusCode::from_u16(404).unwrap())
+                .body(format!("Guid: {:?} not found", guid).into())
+                .unwrap();
+        }
+        None => {
+            eprintln!("No guid found in host header.");
+            return hyper::Response::builder()
+                .status(StatusCode::from_u16(400).unwrap())
+                .body(format!("Required host header format is: [guid].guid.podcastindex.org").into())
+                .unwrap();
+        }
+    }
 }
