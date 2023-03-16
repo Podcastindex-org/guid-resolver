@@ -1,8 +1,9 @@
 # guid-resolver
 Resolves podcast guids to feed urls.
 
-This is a web front-end to a Redis DB.  It takes a podcast guid as a subdomain and resolves it to a feed url, giving back the url
-as a plain text response.
+This is a podcast guid resolver.  It takes a CSV file of guids and feed urls and loads them in a hashmap.  When a GET
+request is sent, it's `host` header is parsed to find the first part.  That substring is then used as the key lookup 
+on the hashmap.  If a url value is found for that key, it is returned as a plain/text HTTP response body.
 
 Send a GET to:
 
