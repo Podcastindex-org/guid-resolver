@@ -11,6 +11,7 @@ use std::sync::Arc;
 use hyper::server::conn::AddrStream;
 use csv;
 use std::env;
+use spinners::{Spinner, Spinners};
 
 
 //Globals --------------------------------------------------------------------------------------------------------------
@@ -127,18 +128,27 @@ async fn route(
 //Return true/false on success or failure
 fn load_guid_table(guid_table: &mut HashMap<String, String>) -> Result<bool, Error> {
     let mut rdr = csv::Reader::from_path("guids.csv")?;
+
+    //Show spinner on terminal while this loads cause it's big
+    let mut sp = Spinner::new(Spinners::Dots9, "Loading guid records...".into());
+
+    //Load each csv record into the hashmap
     for result in rdr.records() {
         let record = result?;
 
         let guid = record.get(1).unwrap().to_string().replace("-", "");
         let url = record.get(2).unwrap().to_string();
 
-        println!("{:?} - {:?}", guid, url);
+        //println!("{:?} - {:?}", guid, url);
         guid_table.insert(
             guid,
             url
         );
     }
+
+    //Stop the spinner
+    sp.stop();
+    println!("Done");
 
     Ok(true)
 }
